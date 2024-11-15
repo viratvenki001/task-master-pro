@@ -1,0 +1,98 @@
+pipeline {
+    agent any
+    
+    tools {
+        maven 'maven2'
+    }
+    
+    environment {
+        SCANNER_HOME= tool 'sonar-scanner'
+    }
+    
+    stages {
+        stage('git checkout') {
+            steps {
+                git 'https://github.com/viratvenki001/task-master-pro.git'
+            }
+        }
+        
+        stage('compile') {
+            steps {
+                sh 'mvn compile'
+            }
+        }
+        
+        stage('test') {
+            steps {
+                sh 'mvn test'
+            }
+        }
+        
+        stage('trivy fs scan') {
+            steps {
+                sh 'trivy fs --format table -o fs-report.html .'
+            }
+        }
+        
+        stage('sonarqube analysis') {
+            steps {
+                script{
+                    withSonarQubeEnv(credentialsId: 'sonar-token') {
+                        sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectKey=taskmasterrpro -Dsonar.projectName=taskmasterrpro -Dsonar.java.binaries=target '''
+                    }    
+                }  
+            }
+        }
+        
+        stage('build') {
+            steps {
+                sh 'mvn package'
+            }
+        }
+        
+        
+        stage('build and tag docker image') {
+            steps {
+                script{
+                    withDockerRegistry(credentialsId: 'dockertoken', toolName: 'docker') {
+                        sh 'docker build -t venkivirat/taskmaster:latest . '
+                    }
+                }
+            }
+        }
+        
+        
+        
+        stage('pushdocker image') {
+            steps {
+                script{
+                    withDockerRegistry(credentialsId: 'dockertoken', toolName: 'docker') {
+                        sh 'docker push venkivirat/taskmaster:latest '
+                    }
+                }
+            }
+        }
+        
+        stage('deploy on kubernetes') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: 'devopsshack-cluster', contextName: '', credentialsId: 'k8-token', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://B01357FDF0C8E49E4C61000F58864385.sk1.us-east-1.eks.amazonaws.com') { 
+                    sh 'kubectl apply -f deployment-service.yml -n webapps'
+                    sleep 30
+            
+                }    
+            }
+        }
+        
+        
+        
+        stage('verify the deploy') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: 'devopsshack-cluster', contextName: '', credentialsId: 'k8-token', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://B01357FDF0C8E49E4C61000F58864385.sk1.us-east-1.eks.amazonaws.com') { 
+                    sh 'kubectl get pods -n webapps'
+                    sh 'kubectl get svc -n webapps'
+            
+                }    
+            }
+        }
+    }    
+}
